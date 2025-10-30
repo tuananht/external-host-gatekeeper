@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>External Host Gatekeeper</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header>
+        <h1 id="site-label">Loading…</h1>
+        <p class="description">
+          Review third-party hosts detected on this site. Choose to block, review later, or allow each host.
+        </p>
+      </header>
+      <section class="summary" id="summary-bar" hidden>
+        <div class="summary-item blocked">
+          <span class="status-chip blocked" aria-hidden="true">🚫</span>
+          <span class="summary-label">Blocked</span>
+          <span class="summary-count" id="summary-blocked">0</span>
+        </div>
+        <div class="summary-item review">
+          <span class="status-chip review" aria-hidden="true">🍪</span>
+          <span class="summary-label">Review later</span>
+          <span class="summary-count" id="summary-pending">0</span>
+        </div>
+        <div class="summary-item allowed">
+          <span class="status-chip allowed" aria-hidden="true">✅</span>
+          <span class="summary-label">Allowed</span>
+          <span class="summary-count" id="summary-allowed">0</span>
+        </div>
+      </section>
+      <section class="hosts">
+        <header class="hosts-header">
+          <span class="header-host">Host</span>
+          <div class="header-toggle legend" id="toggle-legend">
+            <span class="legend-item">
+              <span class="status-chip blocked" aria-hidden="true">🚫</span>
+            </span>
+            <span class="legend-item">
+              <span class="status-chip review" aria-hidden="true">🍪</span>
+            </span>
+            <span class="legend-item">
+              <span class="status-chip allowed" aria-hidden="true">✅</span>
+            </span>
+          </div>
+        </header>
+        <div id="hosts-container" class="hosts-list"></div>
+      </section>
+      <footer>
+        <span class="status-text">
+          <span id="status-text"></span>
+          <span class="developer-credit">Developed by Tuan</span>
+        </span>
+        <button id="save-button" type="button" class="primary">Apply &amp; Refresh</button>
+      </footer>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

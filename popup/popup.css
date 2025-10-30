@@ -1,0 +1,248 @@
+.container {
+  width: 360px;
+  padding: 16px 18px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #202124;
+}
+
+header {
+  margin-bottom: 14px;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 4px 0;
+}
+
+.description {
+  font-size: 12px;
+  margin: 0;
+  color: #5f6368;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  padding: 8px 0 0 0;
+  margin: 0;
+}
+
+.summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f8f9fa;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #5f6368;
+}
+
+.summary-item .summary-count {
+  font-weight: 600;
+  color: #202124;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  padding-left: 6px;
+  padding-right: 6px;
+  gap: 4px;
+  color: #5f6368;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 18px;
+  border-radius: 14px;
+  /* background-color: #3c4043; */
+  font-size: 14px;
+  line-height: 1;
+}
+
+.status-chip.blocked {
+  /* background-color: #d93025; */
+}
+
+.status-chip.review {
+  /* background-color: #fbbc04; */
+}
+
+.status-chip.allowed {
+  /* background-color: #188038; */
+}
+
+.hosts {
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.hosts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #dadce0;
+}
+
+.header-host {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5f6368;
+}
+
+.header-toggle {
+  font-weight: 600;
+}
+
+.hosts-list {
+  max-height: 248px;
+  overflow-y: auto;
+}
+
+.host-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eff0f2;
+  gap: 12px;
+}
+
+.host-entry:last-child {
+  border-bottom: none;
+}
+
+.host-name {
+  font-size: 13px;
+  word-break: break-word;
+  flex: 1;
+}
+
+.switch-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  justify-content: space-between;
+  background-color: #e0e0e0;
+  border-radius: 18px;
+  padding: 2px;
+  min-width: 138px;
+  height: 20px;
+  box-shadow: inset 0 0 0 1px rgba(189, 187, 187, 0.35);
+  overflow: hidden;
+}
+
+.switch-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-toggle label {
+  flex: 1 1 0;
+  text-align: center;
+  font-size: 16px;
+  line-height: 18px;
+  cursor: pointer;
+  z-index: 1;
+  color: #f8f9fa;
+  user-select: none;
+  transition: color 150ms ease;
+}
+
+.switch-toggle label:hover {
+  color: #ffffff;
+}
+
+.switch-toggle input:checked + label {
+  color: #202124;
+}
+
+.switch-toggle input:focus-visible + label {
+  outline: 2px solid #1a73e8;
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+.switch-toggle .switch-slider {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 3);
+  height: calc(100% - 4px);
+  border-radius: 16px;
+  background: #d93025;
+  transition: transform 180ms ease, background-color 180ms ease;
+  z-index: 0;
+}
+
+.switch-toggle input[data-index='0']:checked ~ .switch-slider {
+  transform: translateX(0%);
+  background-color: #d93025;
+}
+
+.switch-toggle input[data-index='1']:checked ~ .switch-slider {
+  transform: translateX(100%);
+  background-color: #fbbc04;
+}
+
+.switch-toggle input[data-index='2']:checked ~ .switch-slider {
+  transform: translateX(200%);
+  background-color: #188038;
+}
+
+footer {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.status-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: #188038;
+  min-height: 16px;
+}
+
+.status-text #status-text {
+  color: inherit;
+}
+
+.developer-credit {
+  color: #5f6368;
+}
+
+.primary {
+  background-color: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
