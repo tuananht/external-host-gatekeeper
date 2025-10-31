@@ -31,11 +31,14 @@ jobs:
       - name: Build extension package
         run: npm run build
 
+      - name: Capture build metadata
+        run: echo "BUILD_DATE=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_ENV"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: external-host-extension
-          path: dist/chrome-extension.zip
+          path: dist/external-host-gatekeeper.zip
           retention-days: 30
 
       - name: Create Release (on main branch push)
@@ -49,11 +52,11 @@ jobs:
 
             **Build Information:**
             - Commit: `${{ github.sha }}`
-            - Build Date: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+            - Build Date: `${{ env.BUILD_DATE }}`
             - Workflow: ${{ github.workflow }}
 
             **Installation:**
-            1. Download `dist/chrome-extension.zip`
+            1. Download `dist/external-host-gatekeeper.zip`
             2. Extract the archive
             3. Open `chrome://extensions/`
             4. Enable "Developer mode"
@@ -66,7 +69,7 @@ jobs:
 
             **Changes in this build:**
             - See commit history for details
-          files: dist/chrome-extension.zip
+          files: dist/external-host-gatekeeper.zip
           draft: false
           prerelease: false
         env:
@@ -78,7 +81,7 @@ jobs:
             echo "## Build Summary"
             echo "- ✅ Dependencies installed"
             echo "- ✅ Extension built"
-            echo "- ✅ Artifact uploaded: dist/chrome-extension.zip"
+            echo "- ✅ Artifact uploaded: dist/external-host-gatekeeper.zip"
             if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ github.event_name }}" = "push" ]; then
               echo "- ✅ Release created: v${{ github.run_number }}"
             fi

@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile);
 const rootDir = path.resolve(__dirname, '..');
 const distDir = path.join(rootDir, 'dist');
 const unpackedDir = path.join(distDir, 'unpacked');
-const archiveName = 'chrome-extension.zip';
+const archiveName = 'external-host-gatekeeper.zip';
 
 async function main() {
   if (process.argv.includes('--clean')) {
