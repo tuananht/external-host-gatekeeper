@@ -7,11 +7,16 @@
   </head>
   <body>
     <main class="container">
-      <header>
-        <h1 id="site-label">Loading…</h1>
-        <p class="description">
-          Review third-party hosts detected on this site. Choose to block, review later, or allow each host.
-        </p>
+      <header class="main-header">
+        <div class="title-group">
+          <h1 id="site-label">Loading…</h1>
+          <p class="description">
+            Review third-party hosts detected on this site. Choose to block, review later, or allow each host.
+          </p>
+        </div>
+        <button id="settings-button" class="icon-button" type="button" title="Global settings" aria-label="Open global settings">
+          ⚙️
+        </button>
       </header>
       <section class="summary" id="summary-bar" hidden>
         <div class="summary-item blocked">
@@ -31,6 +36,9 @@
         </div>
       </section>
       <section class="hosts">
+        <div class="search-row">
+          <input id="search-input" type="text" placeholder="Search hosts" />
+        </div>
         <header class="hosts-header">
           <span class="header-host">Host</span>
           <div class="header-toggle legend" id="toggle-legend">
@@ -47,12 +55,15 @@
         </header>
         <div id="hosts-container" class="hosts-list"></div>
       </section>
-      <footer>
+      <footer class="footer">
         <span class="status-text">
           <span id="status-text"></span>
           <span class="developer-credit">Developed by Tuan</span>
         </span>
-        <button id="save-button" type="button" class="primary">Apply &amp; Refresh</button>
+        <div class="footer-actions">
+          <button id="toggle-site-button" class="text-button" type="button">Disable for this site</button>
+          <button id="save-button" type="button" class="primary">Apply &amp; Refresh</button>
+        </div>
       </footer>
     </main>
     <script type="module" src="popup.js"></script>

@@ -1,7 +1,12 @@
 const MESSAGE_TYPES = {
   GET_SITE_STATE: 'GET_SITE_STATE',
   SAVE_SITE_DECISIONS: 'SAVE_SITE_DECISIONS',
-  HOSTS_OBSERVED: 'HOSTS_OBSERVED'
+  HOSTS_OBSERVED: 'HOSTS_OBSERVED',
+  ADD_GLOBAL_HOST: 'ADD_GLOBAL_HOST',
+  GLOBAL_CONFIG_UPDATED: 'GLOBAL_CONFIG_UPDATED',
+  DISABLE_SITE: 'DISABLE_SITE',
+  ENABLE_SITE: 'ENABLE_SITE',
+  SITE_DISABLED_CHANGED: 'SITE_DISABLED_CHANGED'
 };
 
 const STATUS_META = [
@@ -9,6 +14,16 @@ const STATUS_META = [
   { value: 'pending', label: 'Review later', icon: '' },
   { value: 'allowed', label: 'Allow', icon: '' }
 ];
+
+const DEFAULT_STATUS = 'pending';
+
+function normalizeHost(host) {
+  if (!host || typeof host !== 'string') {
+    return '';
+  }
+  return host.trim().toLowerCase();
+}
+
 class HostRow {
   constructor(host, status, onStatusChange) {
     this.host = host;
@@ -33,6 +48,8 @@ class HostRow {
     name.className = 'host-name';
     name.textContent = this.host;
 
+    const actions = document.createElement('div');
+    actions.className = 'entry-actions';
     const toggle = document.createElement('div');
     toggle.className = 'switch-toggle switch-3 switch-candy';
     const groupName = `mode-${HostRow.#sanitizeHost(this.host)}`;
@@ -66,8 +83,10 @@ class HostRow {
     slider.setAttribute('aria-hidden', 'true');
     toggle.appendChild(slider);
 
+    actions.appendChild(toggle);
+
     this.root.appendChild(name);
-    this.root.appendChild(toggle);
+    this.root.appendChild(actions);
   }
 
   static #sanitizeHost(host) {
@@ -78,7 +97,10 @@ class HostRow {
 class PopupApp {
   constructor() {
     this.saveButton = document.getElementById('save-button');
+    this.settingsButton = document.getElementById('settings-button');
+    this.toggleSiteButton = document.getElementById('toggle-site-button');
     this.hostsContainer = document.getElementById('hosts-container');
+    this.searchInput = document.getElementById('search-input');
     this.statusText = document.getElementById('status-text');
     this.siteLabel = document.getElementById('site-label');
     this.toggleLegend = document.getElementById('toggle-legend');
@@ -86,20 +108,51 @@ class PopupApp {
     this.summaryBlocked = document.getElementById('summary-blocked');
     this.summaryPending = document.getElementById('summary-pending');
     this.summaryAllowed = document.getElementById('summary-allowed');
+
     this.mainHost = null;
     this.tabId = null;
-    this.rows = new Map();
-    this.decisions = new Map();
+    this.rows = new Map(); // normalizedHost -> HostRow
+    this.localSelections = new Map(); // normalizedHost -> status
+    this.globalStatuses = new Map(); // normalizedHost -> status
+    this.isDisabled = false;
   }
 
   async init() {
-    this.saveButton.addEventListener('click', () => this.handleSave());
-    if (this.hostsContainer) {
-      this.hostsContainer.addEventListener('scroll', () => this.adjustLegendPadding());
-    }
+    this.saveButton?.addEventListener('click', () => this.handleSave());
+    this.settingsButton?.addEventListener('click', () => {
+      chrome.runtime.openOptionsPage().catch((error) => {
+        console.error('Failed to open options page', error);
+      });
+    });
+    this.toggleSiteButton?.addEventListener('click', () => this.handleToggleSite());
+    this.hostsContainer?.addEventListener('scroll', () => this.adjustLegendPadding());
+    this.searchInput?.addEventListener('input', () => this.applySearch());
+
     chrome.runtime.onMessage.addListener((message) => {
       if (message?.type === MESSAGE_TYPES.HOSTS_OBSERVED && message.tabId === this.tabId) {
-        this.upsertHost(message.host, 'pending');
+        if (this.isDisabled) {
+          return;
+        }
+        const normalized = normalizeHost(message.host);
+        const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+        this.globalStatuses.set(normalized, globalStatus);
+        const effective = this.getEffectiveStatus(normalized);
+        this.upsertHost(message.host, normalized, effective);
+      } else if (message?.type === MESSAGE_TYPES.GLOBAL_CONFIG_UPDATED) {
+        this.refreshGlobalStatuses(message.config);
+      } else if (message?.type === MESSAGE_TYPES.SITE_DISABLED_CHANGED) {
+        if (!this.mainHost) {
+          return;
+        }
+        if (normalizeHost(this.mainHost) === normalizeHost(message.siteHost)) {
+          this.isDisabled = !!message.disabled;
+          this.updateSiteToggleButton();
+          if (this.isDisabled) {
+            this.renderDisabledState();
+          } else {
+            this.loadState();
+          }
+        }
       }
     });
 
@@ -129,35 +182,63 @@ class PopupApp {
         this.siteLabel.textContent = 'No site detected';
         this.hostsContainer.textContent =
           'Open this popup while viewing a site to review its third-party hosts.';
-        this.saveButton.disabled = true;
+        if (this.saveButton) {
+          this.saveButton.disabled = true;
+        }
+        this.isDisabled = false;
+        this.rows.clear();
+        this.localSelections.clear();
+        if (this.searchInput) {
+          this.searchInput.value = '';
+          this.searchInput.disabled = true;
+        }
+        this.updateSiteToggleButton();
         this.setStatus('');
         return;
       }
 
       this.mainHost = response.mainHost;
+      if (this.saveButton) {
+        this.saveButton.disabled = false;
+      }
       this.siteLabel.textContent = `Site: ${this.mainHost}`;
-      this.hostsContainer.innerHTML = '';
+
+      this.isDisabled = !!response.disabled;
+      this.updateSiteToggleButton();
       this.rows.clear();
-      this.decisions.clear();
+      this.localSelections.clear();
+      this.globalStatuses.clear();
 
-      // Adjust legend alignment immediately in case scrollbar presence changes after content rebuild
-      this.adjustLegendPadding();
+      if (this.isDisabled) {
+        this.renderDisabledState();
+        return;
+      }
 
-      const counts = {
-        blocked: 0,
-        pending: 0,
-        allowed: 0
-      };
+      this.clearDisabledState();
+      this.hostsContainer.innerHTML = '';
 
-      response.hosts.forEach((hostEntry) => {
-        this.upsertHost(hostEntry.host, hostEntry.status);
-        if (counts[hostEntry.status] !== undefined) {
-          counts[hostEntry.status] += 1;
+      if (response.globalStatuses) {
+        Object.entries(response.globalStatuses).forEach(([host, status]) => {
+          this.globalStatuses.set(normalizeHost(host), status);
+        });
+      }
+
+      (response.hosts || []).forEach((hostEntry) => {
+        const displayHost = hostEntry.host;
+        const normalized = normalizeHost(displayHost);
+        const globalStatus =
+          hostEntry.globalStatus || this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+        if (hostEntry.localStatus !== null && hostEntry.localStatus !== undefined) {
+          this.localSelections.set(normalized, hostEntry.localStatus);
         }
+        this.globalStatuses.set(normalized, globalStatus);
+        const effective = this.getEffectiveStatus(normalized);
+        this.upsertHost(displayHost, normalized, effective);
       });
 
-      this.updateSummary(counts);
+      this.updateSummary();
       this.adjustLegendPadding();
+      this.applySearch();
       this.setStatus('');
     } catch (error) {
       console.error(error);
@@ -165,66 +246,83 @@ class PopupApp {
     }
   }
 
-  upsertHost(host, status) {
-    if (this.rows.has(host)) {
-      const row = this.rows.get(host);
-      row.setStatus(status);
+  upsertHost(displayHost, normalized, effectiveStatus) {
+    if (this.isDisabled) {
+      return;
+    }
+    let row = this.rows.get(normalized);
+    if (row) {
+      row.setStatus(effectiveStatus);
     } else {
-      const row = new HostRow(host, status, (targetHost, nextStatus) => {
-        this.updateDecision(targetHost, nextStatus);
-      });
-      this.rows.set(host, row);
+      row = new HostRow(displayHost, effectiveStatus, (host, status) => this.updateDecision(host, status));
+      this.rows.set(normalized, row);
       this.hostsContainer.appendChild(row.root);
     }
-    this.decisions.set(host, status);
-    this.updateSummary(this.calculateSummary());
-    this.adjustLegendPadding();
+    this.applySearch();
   }
 
   updateDecision(host, status) {
-    this.decisions.set(host, status);
+    if (this.isDisabled) {
+      return;
+    }
+    const normalized = normalizeHost(host);
+    const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+    if (status === globalStatus) {
+      this.localSelections.delete(normalized);
+    } else {
+      this.localSelections.set(normalized, status);
+    }
+    const effective = this.getEffectiveStatus(normalized);
+    const row = this.rows.get(normalized);
+    if (row) {
+      row.setStatus(effective);
+    }
     this.setStatus('');
-    this.updateSummary(this.calculateSummary());
-    this.adjustLegendPadding();
+    this.updateSummary();
+    this.applySearch();
   }
 
-  updateSummary(counts) {
-    const total = counts.allowed + counts.blocked + counts.pending;
-    if (total === 0) {
+  updateSummary() {
+    if (this.isDisabled) {
       if (this.summaryBar) {
         this.summaryBar.hidden = true;
       }
       return;
     }
-    if (this.summaryBar) {
-      this.summaryBar.hidden = false;
-    }
-    if (this.summaryBlocked) {
-      this.summaryBlocked.textContent = String(counts.blocked);
-    }
-    if (this.summaryPending) {
-      this.summaryPending.textContent = String(counts.pending);
-    }
-    if (this.summaryAllowed) {
-      this.summaryAllowed.textContent = String(counts.allowed);
-    }
-  }
+    let blocked = 0;
+    let pending = 0;
+    let allowed = 0;
 
-  calculateSummary() {
-    const counts = {
-      blocked: 0,
-      pending: 0,
-      allowed: 0
-    };
-    this.decisions.forEach((status) => {
-      if (counts[status] !== undefined) {
-        counts[status] += 1;
+    this.rows.forEach((row) => {
+      const status = row.selectedStatus || DEFAULT_STATUS;
+      if (status === 'blocked') {
+        blocked += 1;
+      } else if (status === 'allowed') {
+        allowed += 1;
+      } else {
+        pending += 1;
       }
     });
-    return counts;
+
+    const total = blocked + pending + allowed;
+    if (this.summaryBar) {
+      this.summaryBar.hidden = total === 0;
+    }
+    if (this.summaryBlocked) {
+      this.summaryBlocked.textContent = String(blocked);
+    }
+    if (this.summaryPending) {
+      this.summaryPending.textContent = String(pending);
+    }
+    if (this.summaryAllowed) {
+      this.summaryAllowed.textContent = String(allowed);
+    }
   }
 
   adjustLegendPadding() {
+    if (this.isDisabled) {
+      return;
+    }
     if (!this.hostsContainer || !this.toggleLegend) {
       return;
     }
@@ -236,14 +334,17 @@ class PopupApp {
   }
 
   async handleSave() {
+    if (this.isDisabled) {
+      return;
+    }
     if (!this.mainHost || typeof this.tabId !== 'number') {
       return;
     }
     this.saveButton.disabled = true;
     this.setStatus('Applying configuration…');
 
-    const decisions = Array.from(this.decisions.entries()).map(([host, status]) => ({
-      host,
+    const decisions = Array.from(this.localSelections.entries()).map(([normalized, status]) => ({
+      host: normalized,
       status
     }));
 
@@ -269,7 +370,131 @@ class PopupApp {
   }
 
   setStatus(text) {
-    this.statusText.textContent = text || '';
+    if (this.statusText) {
+      this.statusText.textContent = text || '';
+    }
+  }
+
+  getEffectiveStatus(normalized) {
+    if (this.localSelections.has(normalized)) {
+      return this.localSelections.get(normalized);
+    }
+    return this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+  }
+
+  refreshGlobalStatuses(config) {
+    if (!config) {
+      return;
+    }
+    if (this.isDisabled) {
+      return;
+    }
+    const updated = new Map();
+    (config.blockedHosts || []).forEach((host) => updated.set(normalizeHost(host), 'blocked'));
+    (config.allowedHosts || []).forEach((host) => updated.set(normalizeHost(host), 'allowed'));
+    (config.pendingHosts || []).forEach((host) => {
+      const normalized = normalizeHost(host);
+      if (!updated.has(normalized)) {
+        updated.set(normalized, 'pending');
+      }
+    });
+    this.globalStatuses = updated;
+
+    this.rows.forEach((row, normalized) => {
+      const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+      if (this.localSelections.get(normalized) === globalStatus) {
+        this.localSelections.delete(normalized);
+      }
+      const effective = this.getEffectiveStatus(normalized);
+      row.setStatus(effective);
+    });
+    this.updateSummary();
+    this.setStatus('');
+    this.applySearch();
+  }
+
+  applySearch() {
+    if (this.isDisabled) {
+      return;
+    }
+    if (!this.searchInput) {
+      return;
+    }
+    const query = this.searchInput.value.trim().toLowerCase();
+    this.rows.forEach((row, normalized) => {
+      const matches = !query || normalized.includes(query);
+      row.root.style.display = matches ? '' : 'none';
+    });
+  }
+
+  updateSiteToggleButton() {
+    if (!this.toggleSiteButton) {
+      return;
+    }
+    if (!this.mainHost) {
+      this.toggleSiteButton.disabled = true;
+      this.toggleSiteButton.textContent = 'Disable for this site';
+      return;
+    }
+    this.toggleSiteButton.disabled = false;
+    this.toggleSiteButton.textContent = this.isDisabled ? 'Enable for this site' : 'Disable for this site';
+  }
+
+  renderDisabledState() {
+    this.rows.clear();
+    this.localSelections.clear();
+    if (this.searchInput) {
+      this.searchInput.value = '';
+      this.searchInput.disabled = true;
+    }
+    if (this.saveButton) {
+      this.saveButton.disabled = true;
+    }
+    if (this.hostsContainer) {
+      this.hostsContainer.innerHTML = '<div class="disabled-message">This extension is disabled for this site.</div>';
+    }
+    if (this.summaryBar) {
+      this.summaryBar.hidden = true;
+    }
+  }
+
+  clearDisabledState() {
+    if (this.searchInput) {
+      this.searchInput.disabled = false;
+    }
+    if (this.saveButton) {
+      this.saveButton.disabled = false;
+    }
+    if (this.hostsContainer) {
+      this.hostsContainer.innerHTML = '';
+    }
+    if (this.summaryBar) {
+      this.summaryBar.hidden = true;
+    }
+  }
+
+  async handleToggleSite() {
+    if (!this.mainHost) {
+      return;
+    }
+    const messageType = this.isDisabled ? MESSAGE_TYPES.ENABLE_SITE : MESSAGE_TYPES.DISABLE_SITE;
+    this.toggleSiteButton.disabled = true;
+    this.setStatus(this.isDisabled ? 'Enabling…' : 'Disabling…');
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: messageType,
+        siteHost: this.mainHost
+      });
+      if (response?.error) {
+        throw new Error(response.error);
+      }
+      await this.loadState();
+    } catch (error) {
+      console.error(error);
+      this.setStatus('Failed to toggle site state');
+    } finally {
+      this.toggleSiteButton.disabled = false;
+    }
   }
 }
 
