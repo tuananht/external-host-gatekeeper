@@ -34,9 +34,33 @@ export class RuleManager {
     );
 
     if (rulesToRemove.length || addRules.length) {
+      console.log(`[RuleManager] Syncing site rules for ${siteHost}:`, {
+        blockedHostsCount: Object.keys(blockedHosts).length,
+        rulesToRemove: siteRuleIds.length,
+        rulesToAdd: addRules.length,
+        addRules: addRules.map(r => ({ 
+          id: r.id, 
+          initiatorDomains: r.condition.initiatorDomains,
+          requestDomains: r.condition.requestDomains 
+        }))
+      });
       await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: siteRuleIds,
         addRules
+      });
+      console.log(`[RuleManager] Site rules synced successfully for ${siteHost}`);
+    }
+  }
+
+  async removeSiteRules(siteHost) {
+    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const siteRuleIds = existingRules
+      .filter((rule) => RuleManager.#ruleMatchesSite(rule, siteHost))
+      .map((rule) => rule.id);
+
+    if (siteRuleIds.length) {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: siteRuleIds
       });
     }
   }
@@ -61,25 +85,37 @@ export class RuleManager {
       });
     });
 
+    // Get disabled sites - global rules should not apply to them
+    const disabledSites = await this.storage.getDisabledSites();
+
+    const rulesToUpdate = [];
     blockedHosts.forEach((rawHost) => {
       const blockedHost = RuleManager.normalizeHost(rawHost);
       const ruleId = RuleManager.ensureGlobalRuleId(blockedHost, this.globalRuleOffset);
       desiredRuleIds.add(ruleId);
-      const exclusions = Array.from(allowOverrides.get(blockedHost) || []).sort();
+      // Combine allow overrides and disabled sites for exclusions
+      const allowExclusions = Array.from(allowOverrides.get(blockedHost) || []);
+      const exclusions = [...new Set([...allowExclusions, ...disabledSites])].sort();
       const existingRule = existingRuleById.get(ruleId);
-      let alreadyPresent = false;
+      let needsUpdate = true;
       if (existingRule) {
         const existingDomains = Array.isArray(existingRule.condition?.requestDomains)
           ? existingRule.condition.requestDomains.map(RuleManager.normalizeHost)
           : [];
         const existingExcluded = new Set(existingRule.condition?.excludedInitiatorDomains || []);
-        alreadyPresent =
+        const isIdentical =
           existingDomains.length === 1 &&
           existingDomains[0] === blockedHost &&
           exclusions.length === existingExcluded.size &&
           exclusions.every((domain) => existingExcluded.has(domain));
+        if (isIdentical) {
+          needsUpdate = false;
+        } else {
+          // Rule exists but needs updating - mark it for removal
+          rulesToUpdate.push(ruleId);
+        }
       }
-      if (!alreadyPresent) {
+      if (needsUpdate) {
         addRules.push(
           RuleManager.#buildGlobalBlockRule({
             blockedHost,
@@ -90,15 +126,49 @@ export class RuleManager {
       }
     });
 
-    const rulesToRemove = globalRules
-      .filter((rule) => !desiredRuleIds.has(rule.id))
-      .map((rule) => rule.id);
+    // Remove rules that are no longer needed OR need updating
+    const rulesToRemove = [
+      ...rulesToUpdate,
+      ...globalRules
+        .filter((rule) => !desiredRuleIds.has(rule.id))
+        .map((rule) => rule.id)
+    ];
 
     if (rulesToRemove.length || addRules.length) {
-      await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: rulesToRemove,
-        addRules
+      console.log('[RuleManager] Syncing global rules:', {
+        blockedHostsCount: blockedHosts.size,
+        disabledSitesCount: disabledSites.length,
+        disabledSites: disabledSites,
+        rulesToRemove: rulesToRemove.length,
+        rulesToAdd: addRules.length,
+        addRules: addRules.map(r => ({ 
+          id: r.id, 
+          requestDomains: r.condition.requestDomains,
+          excludedInitiatorDomains: r.condition.excludedInitiatorDomains || []
+        }))
       });
+      try {
+        await chrome.declarativeNetRequest.updateDynamicRules({
+          removeRuleIds: rulesToRemove,
+          addRules
+        });
+        console.log('[RuleManager] Global rules synced successfully');
+        
+        // Verify the rules were actually added
+        const allRules = await chrome.declarativeNetRequest.getDynamicRules();
+        const globalRulesAfter = allRules.filter((rule) => rule.id >= this.globalRuleOffset);
+        console.log('[RuleManager] Current global rules in Chrome:', globalRulesAfter.map(r => ({
+          id: r.id,
+          action: r.action,
+          requestDomains: r.condition.requestDomains,
+          excludedInitiatorDomains: r.condition.excludedInitiatorDomains || []
+        })));
+      } catch (error) {
+        console.error('[RuleManager] Failed to sync global rules:', error);
+        throw error;
+      }
+    } else {
+      console.log('[RuleManager] No global rules changes needed');
     }
   }
 
@@ -132,8 +202,7 @@ export class RuleManager {
 
   static #buildGlobalBlockRule({ blockedHost, ruleId, excludedInitiators = [] }) {
     const condition = {
-      requestDomains: [blockedHost],
-      domainType: 'thirdParty'
+      requestDomains: [blockedHost]
     };
     if (excludedInitiators.length) {
       condition.excludedInitiatorDomains = excludedInitiators;

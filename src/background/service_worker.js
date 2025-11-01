@@ -460,6 +460,16 @@ async function handleDisableSite(siteHost) {
   disabledSitesCache = new Set(await storage.disableSite(normalized));
   await applyDisabledState(normalized, true);
   broadcastDisabledUpdate(normalized, true);
+  
+  // Reload all tabs for this site to apply changes
+  const reloadPromises = [];
+  tracker.tabMainHosts.forEach((host, tabId) => {
+    if (StorageService.normalizeHost(host) === normalized) {
+      reloadPromises.push(reloadTab(tabId));
+    }
+  });
+  await Promise.allSettled(reloadPromises);
+  
   return { success: true };
 }
 
@@ -471,26 +481,50 @@ async function handleEnableSite(siteHost) {
   disabledSitesCache = new Set(await storage.enableSite(normalized));
   await applyDisabledState(normalized, false);
   broadcastDisabledUpdate(normalized, false);
+  
+  // Reload all tabs for this site to apply changes
+  const reloadPromises = [];
+  tracker.tabMainHosts.forEach((host, tabId) => {
+    if (StorageService.normalizeHost(host) === normalized) {
+      reloadPromises.push(reloadTab(tabId));
+    }
+  });
+  await Promise.allSettled(reloadPromises);
+  
   return { success: true };
 }
 
 async function applyGlobalConfigUpdate(newConfig) {
+  console.log('[Service Worker] Applying global config update:', {
+    allowedCount: newConfig.allowedHosts.length,
+    blockedCount: newConfig.blockedHosts.length,
+    pendingCount: newConfig.pendingHosts.length,
+    blockedHosts: newConfig.blockedHosts
+  });
   globalConfigCache = newConfig;
   rebuildGlobalStatusIndex();
   await ruleManager.syncGlobal(globalConfigCache);
   await refreshAllTabsAfterGlobalChange();
   broadcastGlobalUpdate();
+  console.log('[Service Worker] Global config update complete');
 }
 
 async function refreshAllTabsAfterGlobalChange() {
   const refreshPromises = [];
+  const reloadPromises = [];
   observedHostsCache.forEach((_, tabId) => {
     const mainHost = tracker.getMainHost(tabId);
     if (mainHost) {
       refreshPromises.push(refreshObservedHostsFromConfig(tabId, mainHost));
+      // Reload tabs to apply new blocking rules
+      reloadPromises.push(reloadTab(tabId));
     }
   });
   await Promise.allSettled(refreshPromises);
+  // Small delay before reloading to ensure rules are synced
+  await new Promise(resolve => setTimeout(resolve, 100));
+  await Promise.allSettled(reloadPromises);
+  console.log(`[Service Worker] Reloaded ${reloadPromises.length} tabs after global config change`);
 }
 
 function broadcastGlobalUpdate() {
@@ -586,6 +620,22 @@ function isSiteDisabled(host) {
 }
 
 async function applyDisabledState(normalizedHost, disabled) {
+  if (disabled) {
+    console.log(`[Service Worker] Disabling site: ${normalizedHost}`);
+    // Remove all site-specific blocking rules for this site
+    await ruleManager.removeSiteRules(normalizedHost);
+    // Resync global rules to add this site to excludedInitiatorDomains
+    await ruleManager.syncGlobal(globalConfigCache);
+    console.log(`[Service Worker] Global rules resynced to exclude ${normalizedHost}`);
+  } else {
+    console.log(`[Service Worker] Enabling site: ${normalizedHost}`);
+    // Restore blocking rules for this site
+    await ruleManager.syncSite(normalizedHost);
+    // Also resync global rules to remove this site from exclusions
+    await ruleManager.syncGlobal(globalConfigCache);
+    console.log(`[Service Worker] Site rules restored for ${normalizedHost}`);
+  }
+
   const tasks = [];
   tracker.tabMainHosts.forEach((host, tabId) => {
     if (StorageService.normalizeHost(host) === normalizedHost) {
