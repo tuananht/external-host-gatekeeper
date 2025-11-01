@@ -282,12 +282,8 @@ async function handleGetSiteState(tabId) {
   }
 
   const siteConfig = await storage.getSite(mainHost);
-  const hostSet = new Set([
-    ...Array.from(observedHostsCache.get(tabId) || []),
-    ...globalConfigCache.allowedHosts,
-    ...globalConfigCache.blockedHosts,
-    ...globalConfigCache.pendingHosts
-  ]);
+  // Only get hosts that were actually accessed during the current tab load
+  const hostSet = tracker.getObservedHosts(tabId);
 
   const globalStatuses = {};
   const hosts = Array.from(hostSet)
