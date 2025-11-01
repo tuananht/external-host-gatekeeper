@@ -52,7 +52,7 @@ class HostRow {
     actions.className = 'entry-actions';
     const toggle = document.createElement('div');
     toggle.className = 'switch-toggle switch-3 switch-candy';
-    const groupName = `mode-${HostRow.#sanitizeHost(this.host)}`;
+    const groupName = `mode-${HostRow.sanitizeHost(this.host)}`;
 
     STATUS_META.forEach((option, index) => {
       const inputId = `${groupName}-${option.value}`;
@@ -89,7 +89,7 @@ class HostRow {
     this.root.appendChild(actions);
   }
 
-  static #sanitizeHost(host) {
+  static sanitizeHost(host) {
     return host.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   }
 }
@@ -114,6 +114,7 @@ class PopupApp {
     this.rows = new Map(); // normalizedHost -> HostRow
     this.localSelections = new Map(); // normalizedHost -> status
     this.globalStatuses = new Map(); // normalizedHost -> status
+    this.originalSiteConfig = new Set(); // hosts that had site-specific config when loaded
     this.isDisabled = false;
   }
 
@@ -208,6 +209,7 @@ class PopupApp {
       this.rows.clear();
       this.localSelections.clear();
       this.globalStatuses.clear();
+      this.originalSiteConfig.clear();
 
       if (this.isDisabled) {
         this.renderDisabledState();
@@ -230,6 +232,7 @@ class PopupApp {
           hostEntry.globalStatus || this.globalStatuses.get(normalized) || DEFAULT_STATUS;
         if (hostEntry.localStatus !== null && hostEntry.localStatus !== undefined) {
           this.localSelections.set(normalized, hostEntry.localStatus);
+          this.originalSiteConfig.add(normalized); // Track hosts with site-specific config
         }
         this.globalStatuses.set(normalized, globalStatus);
         const effective = this.getEffectiveStatus(normalized);
@@ -343,10 +346,21 @@ class PopupApp {
     this.saveButton.disabled = true;
     this.setStatus('Applying configuration…');
 
-    const decisions = Array.from(this.localSelections.entries()).map(([normalized, status]) => ({
-      host: normalized,
-      status
-    }));
+    // Send ALL hosts that need site-specific config or had it originally
+    // This ensures hosts transitioning from site-specific to global are properly cleared
+    const decisions = [];
+    this.rows.forEach((row, normalized) => {
+      const effectiveStatus = this.getEffectiveStatus(normalized);
+      const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+      
+      // Send if: 1) different from global (needs override), OR 2) originally had site-specific config
+      if (effectiveStatus !== globalStatus || this.originalSiteConfig.has(normalized)) {
+        decisions.push({
+          host: normalized,
+          status: effectiveStatus
+        });
+      }
+    });
 
     try {
       const response = await chrome.runtime.sendMessage({

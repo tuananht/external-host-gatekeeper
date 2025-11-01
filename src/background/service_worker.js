@@ -322,9 +322,8 @@ function getLocalStatus(host, siteConfig) {
   if ((siteConfig.allowedHosts || []).some((allowed) => StorageService.normalizeHost(allowed) === normalizedHost)) {
     return 'allowed';
   }
-  if ((siteConfig.pendingHosts || []).some((pendingHost) => StorageService.normalizeHost(pendingHost) === normalizedHost)) {
-    return 'pending';
-  }
+  // Note: pending in site config is NOT an override - it means "use global default"
+  // So we don't return 'pending' here, we return null to check global status
   return null;
 }
 

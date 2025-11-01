@@ -21,25 +21,46 @@ export class RuleManager {
   async syncSite(siteHost) {
     const siteConfig = await this.storage.getSite(siteHost);
     const blockedHosts = siteConfig.blockedHosts || {};
+    const allowedHosts = siteConfig.allowedHosts || [];
+    const globalConfig = await this.storage.getGlobalConfig();
+    const globalBlockedHosts = new Set((globalConfig.blockedHosts || []).map(RuleManager.normalizeHost));
+    
     const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
     const siteRuleIds = existingRules
       .filter((rule) => RuleManager.#ruleMatchesSite(rule, siteHost))
       .map((rule) => rule.id);
 
     const desiredRuleIds = new Set(Object.values(blockedHosts));
-    const rulesToRemove = siteRuleIds.filter((id) => !desiredRuleIds.has(id));
+    const addRules = [];
 
-    const addRules = Object.entries(blockedHosts).map(([blockedHost, ruleId]) =>
-      RuleManager.#buildBlockRule({ siteHost, blockedHost, ruleId })
-    );
+    // Add block rules for site-specific blocks
+    Object.entries(blockedHosts).forEach(([blockedHost, ruleId]) => {
+      desiredRuleIds.add(ruleId);
+      addRules.push(RuleManager.#buildBlockRule({ siteHost, blockedHost, ruleId }));
+    });
+
+    // Add allow rules for hosts that are globally blocked but site wants to allow
+    allowedHosts.forEach((allowedHost) => {
+      const normalized = RuleManager.normalizeHost(allowedHost);
+      if (globalBlockedHosts.has(normalized)) {
+        // Create override rule to allow this host even though it's globally blocked
+        const ruleId = RuleManager.ensureRuleId(siteHost, allowedHost, null);
+        desiredRuleIds.add(ruleId);
+        addRules.push(RuleManager.#buildAllowRule({ siteHost, allowedHost, ruleId }));
+      }
+    });
+
+    const rulesToRemove = siteRuleIds.filter((id) => !desiredRuleIds.has(id));
 
     if (rulesToRemove.length || addRules.length) {
       console.log(`[RuleManager] Syncing site rules for ${siteHost}:`, {
         blockedHostsCount: Object.keys(blockedHosts).length,
+        allowOverridesCount: addRules.filter(r => r.action.type === 'allow').length,
         rulesToRemove: siteRuleIds.length,
         rulesToAdd: addRules.length,
         addRules: addRules.map(r => ({ 
-          id: r.id, 
+          id: r.id,
+          action: r.action.type,
           initiatorDomains: r.condition.initiatorDomains,
           requestDomains: r.condition.requestDomains 
         }))
@@ -191,11 +212,23 @@ export class RuleManager {
   static #buildBlockRule({ siteHost, blockedHost, ruleId }) {
     return {
       id: ruleId,
-      priority: 1,
+      priority: 2, // Higher priority than global rules (site-specific takes precedence)
       action: { type: 'block' },
       condition: {
         initiatorDomains: [siteHost],
         requestDomains: [blockedHost]
+      }
+    };
+  }
+
+  static #buildAllowRule({ siteHost, allowedHost, ruleId }) {
+    return {
+      id: ruleId,
+      priority: 2, // Higher priority than global rules (site-specific takes precedence)
+      action: { type: 'allow' },
+      condition: {
+        initiatorDomains: [siteHost],
+        requestDomains: [allowedHost]
       }
     };
   }
