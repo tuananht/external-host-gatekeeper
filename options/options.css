@@ -70,11 +70,23 @@
   cursor: pointer;
 }
 
-.host-error {
+.host-message {
   margin-top: 6px;
   font-size: 12px;
-  color: #d93025;
   min-height: 16px;
+  transition: color 150ms ease;
+}
+
+.host-message.error {
+  color: #d93025;
+}
+
+.host-message.success {
+  color: #188038;
+}
+
+.host-message.info {
+  color: #1a73e8;
 }
 
 .search {

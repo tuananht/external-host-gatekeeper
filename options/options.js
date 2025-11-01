@@ -110,7 +110,7 @@ class GlobalOptionsApp {
     this.saveButton = document.getElementById('save-button');
     this.toggleLegend = document.getElementById('toggle-legend');
     this.searchInput = document.getElementById('search-input');
-    this.errorLabel = document.getElementById('host-error');
+    this.messageLabel = document.getElementById('host-message');
 
     this.rows = new Map(); // normalized host -> HostRow
     this.decisions = new Map(); // normalized host -> status
@@ -220,16 +220,15 @@ class GlobalOptionsApp {
   handleAddHost() {
     const value = normalizeHost(this.addHostInput?.value || '');
     if (!this.#isValidHost(value)) {
-      this.showError('Enter a valid host (e.g., example.com).');
+      this.showMessage('Enter a valid host (e.g., example.com).', 'error');
       return;
     }
-    this.showError('');
     this.decisions.set(value, 'blocked');
     this.upsertHost(value, 'blocked');
     if (this.addHostInput) {
       this.addHostInput.value = '';
     }
-    this.setStatus(`Added ${value} as globally blocked.`);
+    this.showMessage(`Added ${value} as globally blocked.`, 'success');
     this.updateSummary(this.calculateSummary());
     this.applySearch();
   }
@@ -249,8 +248,8 @@ class GlobalOptionsApp {
         throw new Error(response.error);
       }
       this.applyConfig(response?.config);
-      this.showError('');
-      this.setStatus('Global configuration saved.');
+      this.showMessage('');
+      this.setStatus('Global configuration saved. Reload tabs to apply changes.');
     } catch (error) {
       console.error(error);
       this.setStatus('Failed to save configuration');
@@ -304,9 +303,13 @@ class GlobalOptionsApp {
     }
   }
 
-  showError(message) {
-    if (this.errorLabel) {
-      this.errorLabel.textContent = message || '';
+  showMessage(message, type = 'info') {
+    if (this.messageLabel) {
+      this.messageLabel.textContent = message || '';
+      this.messageLabel.className = 'host-message';
+      if (message && type) {
+        this.messageLabel.classList.add(type);
+      }
     }
   }
 

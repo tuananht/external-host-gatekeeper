@@ -511,20 +511,14 @@ async function applyGlobalConfigUpdate(newConfig) {
 
 async function refreshAllTabsAfterGlobalChange() {
   const refreshPromises = [];
-  const reloadPromises = [];
   observedHostsCache.forEach((_, tabId) => {
     const mainHost = tracker.getMainHost(tabId);
     if (mainHost) {
       refreshPromises.push(refreshObservedHostsFromConfig(tabId, mainHost));
-      // Reload tabs to apply new blocking rules
-      reloadPromises.push(reloadTab(tabId));
     }
   });
   await Promise.allSettled(refreshPromises);
-  // Small delay before reloading to ensure rules are synced
-  await new Promise(resolve => setTimeout(resolve, 100));
-  await Promise.allSettled(reloadPromises);
-  console.log(`[Service Worker] Reloaded ${reloadPromises.length} tabs after global config change`);
+  console.log(`[Service Worker] Refreshed cache for ${refreshPromises.length} tabs (no reload)`);
 }
 
 function broadcastGlobalUpdate() {
