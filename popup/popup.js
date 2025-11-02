@@ -25,13 +25,15 @@ function normalizeHost(host) {
 }
 
 class HostRow {
-  constructor(host, status, onStatusChange) {
+  constructor(host, status, source, onStatusChange) {
     this.host = host;
+    this.source = source;
     this.onStatusChange = onStatusChange;
     this.root = document.createElement('div');
     this.root.className = 'host-entry';
     this.inputs = new Map();
     this.selectedStatus = status;
+    this.sourceElement = null;
     this.#build();
     this.setStatus(status);
   }
@@ -43,7 +45,26 @@ class HostRow {
     });
   }
 
+  setSource(source) {
+    this.source = source;
+    if (this.sourceElement) {
+      this.sourceElement.textContent = source;
+      this.sourceElement.className = 'host-source';
+      if (source) {
+        this.sourceElement.classList.add(source.toLowerCase());
+      }
+    }
+  }
+
   #build() {
+    const sourceLabel = document.createElement('span');
+    sourceLabel.className = 'host-source';
+    sourceLabel.textContent = this.source || '';
+    if (this.source) {
+      sourceLabel.classList.add(this.source.toLowerCase());
+    }
+    this.sourceElement = sourceLabel;
+
     const name = document.createElement('span');
     name.className = 'host-name';
     name.textContent = this.host;
@@ -85,6 +106,7 @@ class HostRow {
 
     actions.appendChild(toggle);
 
+    this.root.appendChild(sourceLabel);
     this.root.appendChild(name);
     this.root.appendChild(actions);
   }
@@ -115,6 +137,7 @@ class PopupApp {
     this.localSelections = new Map(); // normalizedHost -> status
     this.globalStatuses = new Map(); // normalizedHost -> status
     this.originalSiteConfig = new Set(); // hosts that had site-specific config when loaded
+    this.hasExplicitGlobal = new Set(); // hosts that have explicit global config
     this.isDisabled = false;
   }
 
@@ -138,7 +161,8 @@ class PopupApp {
         const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
         this.globalStatuses.set(normalized, globalStatus);
         const effective = this.getEffectiveStatus(normalized);
-        this.upsertHost(message.host, normalized, effective);
+        // For dynamically detected hosts, pass null as hostEntry (will be treated as new if appropriate)
+        this.upsertHost(message.host, normalized, effective, null);
       } else if (message?.type === MESSAGE_TYPES.GLOBAL_CONFIG_UPDATED) {
         this.refreshGlobalStatuses(message.config);
       } else if (message?.type === MESSAGE_TYPES.SITE_DISABLED_CHANGED) {
@@ -230,13 +254,21 @@ class PopupApp {
         const normalized = normalizeHost(displayHost);
         const globalStatus =
           hostEntry.globalStatus || this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+        
+        // Track hosts with site-specific config (blocked or allowed, not pending)
         if (hostEntry.localStatus !== null && hostEntry.localStatus !== undefined) {
           this.localSelections.set(normalized, hostEntry.localStatus);
-          this.originalSiteConfig.add(normalized); // Track hosts with site-specific config
+          this.originalSiteConfig.add(normalized); // Has site-specific config
         }
+        
+        // Track hosts with explicit global config
+        if (hostEntry.hasExplicitGlobalConfig) {
+          this.hasExplicitGlobal.add(normalized);
+        }
+        
         this.globalStatuses.set(normalized, globalStatus);
         const effective = this.getEffectiveStatus(normalized);
-        this.upsertHost(displayHost, normalized, effective);
+        this.upsertHost(displayHost, normalized, effective, hostEntry);
       });
 
       this.updateSummary();
@@ -249,15 +281,42 @@ class PopupApp {
     }
   }
 
-  upsertHost(displayHost, normalized, effectiveStatus) {
+  upsertHost(displayHost, normalized, effectiveStatus, hostEntry = null) {
     if (this.isDisabled) {
       return;
     }
+    
+    // Determine source:
+    // 1. "Site" if host has site-specific config (in originalSiteConfig or localSelections)
+    // 2. "New" if host is newly detected (no config anywhere)
+    // 3. "Global" if host uses explicit global config
+    let source;
+    
+    const hasSiteConfig = this.originalSiteConfig.has(normalized);
+    const hasLocalOverride = this.localSelections.has(normalized);
+    
+    if (hasSiteConfig || hasLocalOverride) {
+      // Has site-specific configuration
+      source = 'Site';
+    } else {
+      // Check if host has explicit global config
+      const hasExplicitGlobalConfig = hostEntry?.hasExplicitGlobalConfig || false;
+      
+      if (hasExplicitGlobalConfig) {
+        // Has explicit global config (blocked or allowed globally)
+        source = 'Global';
+      } else {
+        // No config anywhere - newly detected host
+        source = 'New';
+      }
+    }
+    
     let row = this.rows.get(normalized);
     if (row) {
       row.setStatus(effectiveStatus);
+      row.setSource(source);
     } else {
-      row = new HostRow(displayHost, effectiveStatus, (host, status) => this.updateDecision(host, status));
+      row = new HostRow(displayHost, effectiveStatus, source, (host, status) => this.updateDecision(host, status));
       this.rows.set(normalized, row);
       this.hostsContainer.appendChild(row.root);
     }
@@ -279,6 +338,20 @@ class PopupApp {
     const row = this.rows.get(normalized);
     if (row) {
       row.setStatus(effective);
+      
+      // Update source based on current state
+      let source;
+      const hasSiteConfig = this.originalSiteConfig.has(normalized);
+      const hasLocalOverride = this.localSelections.has(normalized);
+      
+      if (hasSiteConfig || hasLocalOverride) {
+        source = 'Site';
+      } else {
+        // No site config, check if has explicit global config
+        const hasExplicitGlobal = this.hasExplicitGlobal.has(normalized);
+        source = hasExplicitGlobal ? 'Global' : 'New';
+      }
+      row.setSource(source);
     }
     this.setStatus('');
     this.updateSummary();

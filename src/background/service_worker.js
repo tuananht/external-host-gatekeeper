@@ -286,22 +286,33 @@ async function handleGetSiteState(tabId) {
   const hostSet = tracker.getObservedHosts(tabId);
 
   const globalStatuses = {};
+  const hasExplicitGlobalConfig = {};
+  
   const hosts = Array.from(hostSet)
     .map((host) => {
       const normalizedHost = StorageService.normalizeHost(host);
       const globalStatus = getGlobalStatus(normalizedHost, mainHost);
       const localStatus = getLocalStatus(normalizedHost, siteConfig);
+      
+      // Check if host has explicit global config (not just default)
+      const hasExplicit = globalStatusIndex.blocked.has(normalizedHost) ||
+                         globalStatusIndex.allowed.has(normalizedHost) ||
+                         globalStatusIndex.pending.has(normalizedHost);
+      
       globalStatuses[host] = globalStatus;
+      hasExplicitGlobalConfig[host] = hasExplicit;
+      
       return {
         host,
         status: determineHostStatus(normalizedHost, siteConfig, mainHost),
         globalStatus,
-        localStatus
+        localStatus,
+        hasExplicitGlobalConfig: hasExplicit
       };
     })
     .sort((a, b) => a.host.localeCompare(b.host));
 
-  return { mainHost, hosts, globalStatuses, disabled: false };
+  return { mainHost, hosts, globalStatuses, hasExplicitGlobalConfig, disabled: false };
 }
 
 function determineHostStatus(host, siteConfig, mainHost) {
