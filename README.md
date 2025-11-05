@@ -10,6 +10,8 @@ Chrome extension that monitors every third-party host contacted while you browse
 - **Session cache** — keeps detected hosts available across popup restarts via `chrome.storage.session`.
 - **Badge counts** — toolbar badge reflects the number of third-party hosts seen for the active tab.
 - **Visual review UI** — MV3 popup with candy-style tri-state switches, summary bar, and autocomplete legend alignment.
+- **Global defaults** — dedicated settings tab (gear icon) to manage hosts that should default to blocked or allowed across every site.
+- **Opinionated defaults** — ships with common telemetry hosts (e.g., `www.googletagmanager.com`, `connect.facebook.net`) blocked until you explicitly allow them.
 - **Automated packaging** — simple Node build script plus a GitHub Actions workflow that builds, uploads artifacts, and creates releases on `main` pushes.
 
 ## Project Structure
@@ -34,7 +36,7 @@ scripts/build.js   Node build script that assembles dist/chrome-extension.zip
    ```bash
    npm install
    ```
-2. Run the build to produce `dist/unpacked` and `dist/chrome-extension.zip`:
+2. Run the build to produce `dist/unpacked` and `dist/external-host-gatekeeper.zip`:
    ```bash
    npm run build
    ```
@@ -42,6 +44,8 @@ scripts/build.js   Node build script that assembles dist/chrome-extension.zip
    - Navigate to `chrome://extensions/`
    - Enable **Developer mode**
    - Click **Load unpacked** and select `dist/unpacked`
+
+4. Optional: adjust global defaults via the popup gear icon, which opens the options page where you can manage allow/block lists that apply to every site by default.
 
 ## Git Workflow
 

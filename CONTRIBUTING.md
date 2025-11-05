@@ -34,6 +34,8 @@ Build output is intentionally excluded from git via `.gitignore`.
   - `ruleManager.js`: Maps config to DNR rules.
   - `requestTracker.js`: Tracks per-tab host observations in memory.
 - `popup/` — MV3 popup UI (HTML/CSS/JS) with live host list and tri-state toggles.
+- `options/` — global defaults page surfaced via the popup gear icon (mirrors popup UI for managing allow/block lists).
+- `StorageService.defaultGlobalBlocked` seeds the first-run configuration with opinionated telemetry hosts (extend here for new defaults).
 - `assets/icons/` — Shield artwork for extension icon (generated via Pillow script).
 - `scripts/build.js` — Node build script packaging `manifest.json`, `src`, `popup`, and `assets`.
 - `.github/workflows/build-extension.yml` — CI pipeline mirroring `npm run build`, uploading artifacts, and creating releases on `main`.

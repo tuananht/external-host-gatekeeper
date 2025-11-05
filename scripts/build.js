@@ -26,7 +26,7 @@ async function main() {
 }
 
 async function copyProjectArtifacts() {
-  const itemsToCopy = ['manifest.json', 'popup', 'src', 'assets'];
+  const itemsToCopy = ['manifest.json', 'popup', 'src', 'assets', 'options'];
   for (const item of itemsToCopy) {
     // eslint-disable-next-line no-await-in-loop
     await copyItem(path.join(rootDir, item), path.join(unpackedDir, item));
