@@ -25,15 +25,18 @@ function normalizeHost(host) {
 }
 
 class HostRow {
-  constructor(host, status, source, onStatusChange) {
+  constructor(host, status, source, onStatusChange, onAddToGlobal) {
     this.host = host;
     this.source = source;
     this.onStatusChange = onStatusChange;
+    this.onAddToGlobal = onAddToGlobal;
     this.root = document.createElement('div');
     this.root.className = 'host-entry';
     this.inputs = new Map();
     this.selectedStatus = status;
     this.sourceElement = null;
+    this.addGlobalButton = null;
+    this.sourceContainer = null;
     this.#build();
     this.setStatus(status);
   }
@@ -54,6 +57,45 @@ class HostRow {
         this.sourceElement.classList.add(source.toLowerCase());
       }
     }
+    this.updateAddToGlobalVisibility();
+  }
+
+  updateAddToGlobalVisibility() {
+    if (!this.onAddToGlobal || !this.sourceContainer) {
+      return;
+    }
+    const showButton = this.source === 'Site' || this.source === 'New';
+    if (showButton) {
+      if (!this.addGlobalButton) {
+        const addButton = document.createElement('button');
+        addButton.type = 'button';
+        addButton.className = 'add-global-button';
+        addButton.textContent = '+';
+        addButton.title = 'Add to global rules';
+        addButton.setAttribute('aria-label', 'Add host to global rules');
+        addButton.addEventListener('click', () => {
+          if (!this.onAddToGlobal) {
+            return;
+          }
+          addButton.disabled = true;
+          Promise.resolve(this.onAddToGlobal(this.host))
+            .catch((error) => {
+              console.error('Failed to add host to global', error);
+            })
+            .finally(() => {
+              if (this.addGlobalButton === addButton) {
+                this.addGlobalButton.disabled = false;
+              }
+              this.updateAddToGlobalVisibility();
+            });
+        });
+        this.addGlobalButton = addButton;
+        this.sourceContainer.appendChild(addButton);
+      }
+    } else if (this.addGlobalButton) {
+      this.addGlobalButton.remove();
+      this.addGlobalButton = null;
+    }
   }
 
   #build() {
@@ -64,6 +106,11 @@ class HostRow {
       sourceLabel.classList.add(this.source.toLowerCase());
     }
     this.sourceElement = sourceLabel;
+
+    const sourceContainer = document.createElement('div');
+    sourceContainer.className = 'host-source-container';
+    sourceContainer.appendChild(sourceLabel);
+    this.sourceContainer = sourceContainer;
 
     const name = document.createElement('span');
     name.className = 'host-name';
@@ -106,9 +153,10 @@ class HostRow {
 
     actions.appendChild(toggle);
 
-    this.root.appendChild(sourceLabel);
+    this.root.appendChild(sourceContainer);
     this.root.appendChild(name);
     this.root.appendChild(actions);
+    this.updateAddToGlobalVisibility();
   }
 
   static sanitizeHost(host) {
@@ -138,7 +186,14 @@ class PopupApp {
     this.globalStatuses = new Map(); // normalizedHost -> status
     this.originalSiteConfig = new Set(); // hosts that had site-specific config when loaded
     this.hasExplicitGlobal = new Set(); // hosts that have explicit global config
+    this.promotedToGlobal = new Set(); // hosts promoted to global during current session
+    this.clearedSiteConfig = new Set(); // hosts whose site config should be cleared on save
     this.isDisabled = false;
+    this.autoSaveTimer = null;
+    this.autoSavePending = false;
+    this.isPersisting = false;
+    this.currentPersistPromise = null;
+    this.statusClearTimer = null;
   }
 
   async init() {
@@ -234,6 +289,9 @@ class PopupApp {
       this.localSelections.clear();
       this.globalStatuses.clear();
       this.originalSiteConfig.clear();
+      this.hasExplicitGlobal.clear();
+      this.promotedToGlobal.clear();
+      this.clearedSiteConfig.clear();
 
       if (this.isDisabled) {
         this.renderDisabledState();
@@ -294,21 +352,22 @@ class PopupApp {
     
     const hasSiteConfig = this.originalSiteConfig.has(normalized);
     const hasLocalOverride = this.localSelections.has(normalized);
+    const isPromoted = this.promotedToGlobal.has(normalized);
+    const hasExplicitGlobalConfig =
+      hostEntry?.hasExplicitGlobalConfig || this.hasExplicitGlobal.has(normalized) || false;
     
-    if (hasSiteConfig || hasLocalOverride) {
-      // Has site-specific configuration
+    if (hasLocalOverride) {
       source = 'Site';
+    } else if (isPromoted) {
+      source = 'Global';
+    } else if (hasSiteConfig) {
+      source = 'Site';
+    } else if (hasExplicitGlobalConfig) {
+      // Has explicit global config (blocked or allowed globally)
+      source = 'Global';
     } else {
-      // Check if host has explicit global config
-      const hasExplicitGlobalConfig = hostEntry?.hasExplicitGlobalConfig || false;
-      
-      if (hasExplicitGlobalConfig) {
-        // Has explicit global config (blocked or allowed globally)
-        source = 'Global';
-      } else {
-        // No config anywhere - newly detected host
-        source = 'New';
-      }
+      // No config anywhere - newly detected host
+      source = 'New';
     }
     
     let row = this.rows.get(normalized);
@@ -316,7 +375,13 @@ class PopupApp {
       row.setStatus(effectiveStatus);
       row.setSource(source);
     } else {
-      row = new HostRow(displayHost, effectiveStatus, source, (host, status) => this.updateDecision(host, status));
+      row = new HostRow(
+        displayHost,
+        effectiveStatus,
+        source,
+        (host, status) => this.updateDecision(host, status),
+        (host) => this.handleAddToGlobal(host)
+      );
       this.rows.set(normalized, row);
       this.hostsContainer.appendChild(row.root);
     }
@@ -331,8 +396,14 @@ class PopupApp {
     const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
     if (status === globalStatus) {
       this.localSelections.delete(normalized);
+      if (this.promotedToGlobal.has(normalized)) {
+        this.clearedSiteConfig.add(normalized);
+      }
     } else {
       this.localSelections.set(normalized, status);
+      this.promotedToGlobal.delete(normalized);
+      this.clearedSiteConfig.delete(normalized);
+      this.originalSiteConfig.add(normalized);
     }
     const effective = this.getEffectiveStatus(normalized);
     const row = this.rows.get(normalized);
@@ -343,11 +414,13 @@ class PopupApp {
       let source;
       const hasSiteConfig = this.originalSiteConfig.has(normalized);
       const hasLocalOverride = this.localSelections.has(normalized);
-      
-      if (hasSiteConfig || hasLocalOverride) {
+      if (hasLocalOverride) {
+        source = 'Site';
+      } else if (this.promotedToGlobal.has(normalized)) {
+        source = 'Global';
+      } else if (hasSiteConfig) {
         source = 'Site';
       } else {
-        // No site config, check if has explicit global config
         const hasExplicitGlobal = this.hasExplicitGlobal.has(normalized);
         source = hasExplicitGlobal ? 'Global' : 'New';
       }
@@ -355,7 +428,180 @@ class PopupApp {
     }
     this.setStatus('');
     this.updateSummary();
+    this.scheduleAutoSave();
     this.applySearch();
+  }
+
+  collectSiteDecisions() {
+    const decisions = [];
+    this.rows.forEach((row, normalized) => {
+      if (this.clearedSiteConfig.has(normalized)) {
+        decisions.push({
+          host: normalized,
+          status: 'pending'
+        });
+        return;
+      }
+      const effectiveStatus = this.getEffectiveStatus(normalized);
+      const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
+      if (effectiveStatus !== globalStatus || this.originalSiteConfig.has(normalized)) {
+        decisions.push({
+          host: normalized,
+          status: effectiveStatus
+        });
+      }
+    });
+    return decisions;
+  }
+
+  cancelAutoSaveTimer() {
+    if (this.autoSaveTimer) {
+      clearTimeout(this.autoSaveTimer);
+      this.autoSaveTimer = null;
+    }
+  }
+
+  scheduleAutoSave() {
+    if (this.isDisabled) {
+      return;
+    }
+    if (!this.mainHost || typeof this.tabId !== 'number') {
+      return;
+    }
+    this.cancelAutoSaveTimer();
+    this.autoSaveTimer = setTimeout(() => {
+      this.autoSaveTimer = null;
+      this.triggerAutoSave();
+    }, 300);
+  }
+
+  async triggerAutoSave() {
+    if (this.isPersisting) {
+      this.autoSavePending = true;
+      return;
+    }
+    try {
+      await this.persistDecisions({
+        reload: false,
+        closePopup: false,
+        disableButton: false,
+        statusMessages: {
+          success: 'Changes saved',
+          error: 'Failed to save changes'
+        },
+        autoClearStatus: 2000
+      });
+    } catch (error) {
+      // Error already logged in persistDecisions
+    } finally {
+      if (this.autoSavePending) {
+        this.autoSavePending = false;
+        this.triggerAutoSave();
+      }
+    }
+  }
+
+  async persistDecisions(options = {}) {
+    if (this.isDisabled) {
+      return;
+    }
+    if (!this.mainHost || typeof this.tabId !== 'number') {
+      return;
+    }
+
+    const {
+      reload = false,
+      closePopup = false,
+      disableButton = false,
+      statusMessages = {},
+      autoClearStatus = null
+    } = options;
+
+    const decisions = this.collectSiteDecisions();
+    if (!decisions.length) {
+      this.originalSiteConfig = new Set(this.localSelections.keys());
+      this.clearedSiteConfig.clear();
+      if (statusMessages.success) {
+        this.setStatus(statusMessages.success);
+        if (autoClearStatus) {
+          this.scheduleStatusClear(autoClearStatus);
+        }
+      }
+      return;
+    }
+
+    if (this.isPersisting) {
+      this.autoSavePending = true;
+      return;
+    }
+
+    this.isPersisting = true;
+    if (disableButton && this.saveButton) {
+      this.saveButton.disabled = true;
+    }
+    if (statusMessages.pending) {
+      this.setStatus(statusMessages.pending);
+    }
+
+    const message = {
+      type: MESSAGE_TYPES.SAVE_SITE_DECISIONS,
+      tabId: this.tabId,
+      mainHost: this.mainHost,
+      decisions,
+      reload
+    };
+
+    const persistPromise = (async () => {
+      try {
+        const response = await chrome.runtime.sendMessage(message);
+        if (response?.error) {
+          throw new Error(response.error);
+        }
+
+        this.originalSiteConfig = new Set(this.localSelections.keys());
+        this.clearedSiteConfig.clear();
+
+        if (statusMessages.success) {
+          this.setStatus(statusMessages.success);
+        } else if (reload) {
+          this.setStatus('Saved');
+        }
+        if (autoClearStatus && !reload) {
+          this.scheduleStatusClear(autoClearStatus);
+        }
+
+        if (reload && closePopup) {
+          window.close();
+        }
+      } catch (error) {
+        console.error(error);
+        if (statusMessages.error) {
+          this.setStatus(statusMessages.error);
+        }
+        throw error;
+      } finally {
+        if (disableButton && this.saveButton) {
+          this.saveButton.disabled = false;
+        }
+        this.isPersisting = false;
+      }
+    })();
+
+    this.currentPersistPromise = persistPromise;
+    try {
+      await persistPromise;
+    } finally {
+      if (this.currentPersistPromise === persistPromise) {
+        this.currentPersistPromise = null;
+      }
+      if (this.autoSavePending && !reload) {
+        const shouldRetry = this.autoSavePending;
+        this.autoSavePending = false;
+        if (shouldRetry) {
+          this.triggerAutoSave();
+        }
+      }
+    }
   }
 
   updateSummary() {
@@ -395,6 +641,56 @@ class PopupApp {
     }
   }
 
+  async handleAddToGlobal(host) {
+    if (this.isDisabled) {
+      return;
+    }
+    const normalized = normalizeHost(host);
+    if (!normalized) {
+      return;
+    }
+    const row = this.rows.get(normalized);
+    const selectedStatus = row?.selectedStatus || this.getEffectiveStatus(normalized);
+    this.setStatus('Adding to global settings…');
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: MESSAGE_TYPES.ADD_GLOBAL_HOST,
+        host,
+        status: selectedStatus
+      });
+      if (response?.error) {
+        throw new Error(response.error);
+      }
+      if (response?.config) {
+        this.refreshGlobalStatuses(response.config);
+      } else {
+        this.globalStatuses.set(normalized, selectedStatus);
+        this.hasExplicitGlobal.add(normalized);
+      }
+
+      this.promotedToGlobal.add(normalized);
+      this.clearedSiteConfig.add(normalized);
+      this.originalSiteConfig.delete(normalized);
+      this.localSelections.delete(normalized);
+
+      const updatedRow = this.rows.get(normalized);
+      if (updatedRow) {
+        const effective = this.getEffectiveStatus(normalized);
+        updatedRow.setStatus(effective);
+        updatedRow.setSource('Global');
+      }
+
+      this.updateSummary();
+      this.applySearch();
+      this.setStatus('Added to global settings');
+      this.scheduleAutoSave();
+    } catch (error) {
+      console.error(error);
+      this.setStatus('Failed to add to global settings');
+    }
+  }
+
   adjustLegendPadding() {
     if (this.isDisabled) {
       return;
@@ -416,50 +712,50 @@ class PopupApp {
     if (!this.mainHost || typeof this.tabId !== 'number') {
       return;
     }
-    this.saveButton.disabled = true;
-    this.setStatus('Applying configuration…');
-
-    // Send ALL hosts that need site-specific config or had it originally
-    // This ensures hosts transitioning from site-specific to global are properly cleared
-    const decisions = [];
-    this.rows.forEach((row, normalized) => {
-      const effectiveStatus = this.getEffectiveStatus(normalized);
-      const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
-      
-      // Send if: 1) different from global (needs override), OR 2) originally had site-specific config
-      if (effectiveStatus !== globalStatus || this.originalSiteConfig.has(normalized)) {
-        decisions.push({
-          host: normalized,
-          status: effectiveStatus
-        });
+    this.cancelAutoSaveTimer();
+    if (this.currentPersistPromise) {
+      try {
+        await this.currentPersistPromise;
+      } catch (error) {
+        // Ignore errors from prior auto-saves; status already set
       }
-    });
-
+    }
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.SAVE_SITE_DECISIONS,
-        tabId: this.tabId,
-        mainHost: this.mainHost,
-        decisions
+      await this.persistDecisions({
+        reload: true,
+        closePopup: true,
+        disableButton: true,
+        statusMessages: {
+          pending: 'Applying configuration…',
+          success: 'Saved. Refreshing tab…',
+          error: 'Failed to save configuration'
+        }
       });
-
-      if (response?.error) {
-        throw new Error(response.error);
-      }
-
-      this.setStatus('Saved. Refreshing tab…');
-      window.close();
     } catch (error) {
-      console.error(error);
-      this.setStatus('Failed to save configuration');
-      this.saveButton.disabled = false;
+      // Error details are logged in persistDecisions
     }
   }
 
   setStatus(text) {
+    if (this.statusClearTimer) {
+      clearTimeout(this.statusClearTimer);
+      this.statusClearTimer = null;
+    }
     if (this.statusText) {
       this.statusText.textContent = text || '';
     }
+  }
+
+  scheduleStatusClear(delay = 2000) {
+    if (this.statusClearTimer) {
+      clearTimeout(this.statusClearTimer);
+    }
+    this.statusClearTimer = setTimeout(() => {
+      this.statusClearTimer = null;
+      if (this.statusText) {
+        this.statusText.textContent = '';
+      }
+    }, delay);
   }
 
   getEffectiveStatus(normalized) {
@@ -477,15 +773,39 @@ class PopupApp {
       return;
     }
     const updated = new Map();
-    (config.blockedHosts || []).forEach((host) => updated.set(normalizeHost(host), 'blocked'));
-    (config.allowedHosts || []).forEach((host) => updated.set(normalizeHost(host), 'allowed'));
+    const explicitGlobal = new Set();
+    (config.blockedHosts || []).forEach((host) => {
+      const normalized = normalizeHost(host);
+      updated.set(normalized, 'blocked');
+      explicitGlobal.add(normalized);
+    });
+    (config.allowedHosts || []).forEach((host) => {
+      const normalized = normalizeHost(host);
+      updated.set(normalized, 'allowed');
+      explicitGlobal.add(normalized);
+    });
     (config.pendingHosts || []).forEach((host) => {
       const normalized = normalizeHost(host);
       if (!updated.has(normalized)) {
         updated.set(normalized, 'pending');
       }
+      explicitGlobal.add(normalized);
     });
     this.globalStatuses = updated;
+    this.hasExplicitGlobal = explicitGlobal;
+
+    const retainedPromoted = new Set();
+    const retainedCleared = new Set();
+    this.promotedToGlobal.forEach((host) => {
+      if (explicitGlobal.has(host)) {
+        retainedPromoted.add(host);
+        if (this.clearedSiteConfig.has(host)) {
+          retainedCleared.add(host);
+        }
+      }
+    });
+    this.promotedToGlobal = retainedPromoted;
+    this.clearedSiteConfig = retainedCleared;
 
     this.rows.forEach((row, normalized) => {
       const globalStatus = this.globalStatuses.get(normalized) || DEFAULT_STATUS;
@@ -494,6 +814,21 @@ class PopupApp {
       }
       const effective = this.getEffectiveStatus(normalized);
       row.setStatus(effective);
+
+      let source;
+      const hasSiteConfig = this.originalSiteConfig.has(normalized);
+      const hasLocalOverride = this.localSelections.has(normalized);
+      if (hasLocalOverride) {
+        source = 'Site';
+      } else if (this.promotedToGlobal.has(normalized)) {
+        source = 'Global';
+      } else if (hasSiteConfig) {
+        source = 'Site';
+      } else {
+        const hasExplicit = this.hasExplicitGlobal.has(normalized);
+        source = hasExplicit ? 'Global' : 'New';
+      }
+      row.setSource(source);
     });
     this.updateSummary();
     this.setStatus('');
@@ -524,12 +859,17 @@ class PopupApp {
       return;
     }
     this.toggleSiteButton.disabled = false;
-    this.toggleSiteButton.textContent = this.isDisabled ? 'Enable for this site' : 'Disable for this site';
+    this.toggleSiteButton.textContent = this.isDisabled ? 'Enable' : 'Disable';
   }
 
   renderDisabledState() {
     this.rows.clear();
     this.localSelections.clear();
+    this.globalStatuses.clear();
+    this.originalSiteConfig.clear();
+    this.hasExplicitGlobal.clear();
+    this.promotedToGlobal.clear();
+    this.clearedSiteConfig.clear();
     if (this.searchInput) {
       this.searchInput.value = '';
       this.searchInput.disabled = true;
@@ -543,6 +883,7 @@ class PopupApp {
     if (this.summaryBar) {
       this.summaryBar.hidden = true;
     }
+    this.setStatus('Extension disabled for this site');
   }
 
   clearDisabledState() {

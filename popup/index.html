@@ -13,6 +13,7 @@
           <p class="description">
             Review third-party hosts detected on this site. Choose to block, review later, or allow each host.
           </p>
+          <p class="developer-credit">Developed by Tuan</p>
         </div>
         <button id="settings-button" class="icon-button" type="button" title="Global settings" aria-label="Open global settings">
           ⚙️
@@ -43,7 +44,7 @@
           <span class="header-source">Source</span>
           <span class="header-host">Host</span>
           <div class="header-toggle legend" id="toggle-legend">
-            <span class="legend-item">
+            <!-- <span class="legend-item">
               <span class="status-chip blocked" aria-hidden="true">🚫</span>
             </span>
             <span class="legend-item">
@@ -51,7 +52,7 @@
             </span>
             <span class="legend-item">
               <span class="status-chip allowed" aria-hidden="true">✅</span>
-            </span>
+            </span> -->
           </div>
         </header>
         <div id="hosts-container" class="hosts-list"></div>
@@ -59,11 +60,10 @@
       <footer class="footer">
         <span class="status-text">
           <span id="status-text"></span>
-          <span class="developer-credit">Developed by Tuan</span>
         </span>
         <div class="footer-actions">
-          <button id="toggle-site-button" class="text-button" type="button">Disable for this site</button>
-          <button id="save-button" type="button" class="primary">Apply &amp; Refresh</button>
+          <button id="toggle-site-button" class="text-button" type="button">Disable</button>
+          <button id="save-button" type="button" class="primary">Refresh to apply</button>
         </div>
       </footer>
     </main>
