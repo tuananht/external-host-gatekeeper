@@ -183,7 +183,9 @@ function attachMessageListener() {
           });
         return true;
       case MESSAGE_TYPES.SAVE_SITE_DECISIONS:
-        handleSaveSiteDecisions(message.tabId, message.mainHost, message.decisions)
+        handleSaveSiteDecisions(message.tabId, message.mainHost, message.decisions, {
+          reload: message.reload !== false
+        })
           .then(sendResponse)
           .catch((error) => {
             console.error(error);
@@ -338,10 +340,11 @@ function getLocalStatus(host, siteConfig) {
   return null;
 }
 
-async function handleSaveSiteDecisions(tabId, mainHost, decisions) {
+async function handleSaveSiteDecisions(tabId, mainHost, decisions, options = {}) {
   if (typeof tabId !== 'number' || !mainHost) {
     throw new Error('Missing tab context for save');
   }
+  const shouldReload = options.reload !== false;
 
   const siteConfig = await storage.getSite(mainHost);
   const allowed = new Set(siteConfig.allowedHosts);
@@ -395,7 +398,9 @@ async function handleSaveSiteDecisions(tabId, mainHost, decisions) {
   updateBadgeCount(tabId).catch((error) => {
     console.warn('Failed to update badge after save', error);
   });
-  await reloadTab(tabId);
+  if (shouldReload) {
+    await reloadTab(tabId);
+  }
   return { success: true };
 }
 
